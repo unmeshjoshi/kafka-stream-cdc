@@ -9,6 +9,8 @@ import org.apache.kafka.common.serialization.StringDeserializer
 import org.scalatest.concurrent.Eventually
 import org.scalatest.{BeforeAndAfterAll, FunSuite, Matchers}
 
+import scala.concurrent.Future
+
 class KafkaProduceConsumeTest extends FunSuite with BeforeAndAfterAll with Matchers with Eventually with KafkaTest {
   case class Member(id: String, name: String)
   case class MemberRole(memberId: String, relId: String, role: String)
@@ -26,27 +28,32 @@ class KafkaProduceConsumeTest extends FunSuite with BeforeAndAfterAll with Match
   test("Produce And Consume Kafka Message") {
     val producer = createProducer()
     val topic = "memberTopic"
-    produceMessage(producer, topic)
 
-    Thread.sleep(1000)
-    val consumer = createConsumer()
-    consumer.subscribe(Set(topic).asJava)
+
+    produceMessageSynchronously(producer, topic)
+
+    import scala.concurrent.ExecutionContext.Implicits.global
+
 
     //Need to do following only if we need to seek to specific offset.
     //    val partitions: util.List[PartitionInfo] = consumer.partitionsFor(topic)
     //    consumer.poll(10) //need to
     //    consumer.seek(new TopicPartition(topic, partitions.get(0).partition()), 0)
-
-    var i = 0
-    while(i < 100) {
-      val records: ConsumerRecords[String, String] = consumer.poll(1000)
-      records.iterator().asScala.foreach(record ⇒ {
-        println(s"Received Record $record")
-      })
-      println(s"Received ${records.count()} messages")
-      i += records.count()
+    Future {
+      val consumer = createConsumer()
+      consumer.subscribe(Set(topic).asJava)
+      var i = 0
+      while(true) {
+        val records: ConsumerRecords[String, String] = consumer.poll(1000)
+        records.iterator().asScala.foreach(record ⇒ {
+//          println(s"Received Record $record")
+        })
+        println(s"Received ${records.count()} messages")
+        i += records.count()
+      }
     }
 
+    Thread.sleep(100000)
   }
 
   def createConsumer() = {
@@ -68,11 +75,11 @@ class KafkaProduceConsumeTest extends FunSuite with BeforeAndAfterAll with Match
     new KafkaProducer[String, String](props)
   }
 
-  def produceMessage(producer: KafkaProducer[String, String], topic: String, noOfMessages: Int = 100): Unit = {
+  def produceMessageSynchronously(producer: KafkaProducer[String, String], topic: String, noOfMessages: Int = 10000): Unit = {
     for (i ← 0 to noOfMessages) {
       val record = new ProducerRecord[String, String](topic, 0, "key" + i, "value")
-      val metadata = producer.send(record).get()
-      println(s"sent meta(partition=${metadata.partition}, offset=${metadata.offset}) \n")
+      val metadata = producer.send(record)
+//      println(s"sent meta(partition=${metadata.partition}, offset=${metadata.offset}) \n")
     }
   }
 }

@@ -13,7 +13,7 @@ import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializ
 import org.scalatest.concurrent.Eventually
 import org.scalatest.{BeforeAndAfterAll, FunSuite, Matchers}
 
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 
@@ -76,23 +76,17 @@ class AkkaStreamTest extends FunSuite with BeforeAndAfterAll with Matchers with 
   test("should produce and consume kafka messages") {
     produce
 
-
     import scala.concurrent.ExecutionContext.Implicits.global
-
-    val buffer: mutable.Buffer[String] = mutable.Buffer.empty[String]
+    //need to implement windowed takewhile as explained here
+    //https://softwaremill.com/windowing-data-in-akka-streams/
+    var buffer: mutable.Buffer[String] = mutable.Buffer.empty[String]
     Consumer.committableSource(consumerDefaults, Subscriptions.topics("topic1"))
-      .groupBy(100, _.record.key())
-      .fold(List[ConsumerMessage.CommittableMessage[String, String]]())((acc, message) ⇒ {
-        acc :+ message
-      })
-      .mergeSubstreams.map(message ⇒ println(message))
-      .runWith(Sink.ignore)
-//      .mapAsync(1) { msg ⇒ Future {
-//        println(s"********************** ${msg.record.key()}")
-//        println(s"********************** ${msg.record.value()}")
-//        buffer += msg.record.value()
-//        msg
-//      }}.mergeSubstreams.runWith(Sink.ignore)
+      .via(new AccumulateWhileUnchanged(_.record.key()))
+      .mapAsync(1) { messages: immutable.Seq[ConsumerMessage.CommittableMessage[String, String]] ⇒ Future {
+        println(s"********************** ${messages}")
+        buffer = buffer ++ messages.map(_.record.value())
+
+      }}.runWith(Sink.ignore)
     eventually(buffer.size shouldBe 10)
     println(s"******************************** ${buffer.size}")
   }
@@ -100,7 +94,8 @@ class AkkaStreamTest extends FunSuite with BeforeAndAfterAll with Matchers with 
   private def produce() = {
     val done = Source(1 to 10)
       .map { elem =>
-        new ProducerRecord[String, String]("topic1", (elem % 2).toString, elem + "a")
+        println(s"producing ${elem}")
+        new ProducerRecord[String, String]("topic1", (elem / 5).toString, elem + "a")
       }
       .runWith(Producer.plainSink(producerDefaults))
   }
